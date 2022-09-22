@@ -17,9 +17,16 @@ import (
 )
 
 const (
-	GCInterval    = time.Minute
-	SolvedTimeout = time.Hour
+	GCInterval = time.Minute
+
+	SolvedTimeout = time.Minute
 	SolvedTag     = "solved"
+
+	StaleTag = "stale"
+	// inactivity timeout before applying stale tag
+	StaleTimeout = 1 * 24 * time.Hour
+	// how long to wait before closing a stale post
+	StaleGracePeriod = 3 * 24 * time.Hour
 
 	HerderRole = 370280974593818644
 	SgtTailor  = 189020382559207425
@@ -77,6 +84,10 @@ func overwriteCommands(s *state.State) error {
 
 type Bot struct {
 	s *state.State
+
+	// tag cache per guild. Per parent channelID (forum channel) we keep track
+	// of tags that exists. Pretty cursed but it does the job
+	tagCache map[discord.ChannelID]map[string]discord.TagID
 }
 
 func (b *Bot) startGarbageCollection() {
@@ -108,39 +119,48 @@ func (b *Bot) cleanGuild(guild discord.Guild) {
 
 	log.Printf("%d active threads\n", len(threads.Threads))
 
-	// tag cache per guild. Per parent channelID (forum channel) we keep track
-	// of the TagID. If an entry in this map exists it means we've already looked it up.
-	// If a solved tag exists for the forum the map entry will be the TagID in question.
-	// Nill indicates that no solved tag exists for this forum
-	tagCache := make(map[discord.ChannelID]*discord.TagID)
+	b.fillTagCache(threads.Threads)
+	b.cleanSolvedThreads(threads.Threads)
+	b.markStaleThreads(threads.Threads)
+	b.cleanStaleThreads(threads.Threads)
+}
 
-	for _, thread := range threads.Threads {
-		log.Println("checking thread", thread.ID, thread.Name)
-		tagID, ok := tagCache[thread.ParentID]
+func (b *Bot) fillTagCache(threads []discord.Channel) {
+	b.tagCache = make(map[discord.ChannelID]map[string]discord.TagID)
 
-		// cache hit and no solved tag exists
-		if ok && tagID == nil {
-			log.Println("skipping, no solved tag exists")
+	for _, thread := range threads {
+		// cache already populated
+		if _, ok := b.tagCache[thread.ParentID]; ok {
 			continue
 		}
 
-		if !ok {
-			tagID, err = b.getPostSolvedTag(thread)
-			if err != nil {
-				log.Println("unable to get solved tag for thread:", err)
-				continue
-			}
-			tagCache[thread.ParentID] = tagID
+		b.tagCache[thread.ParentID] = make(map[string]discord.TagID)
+
+		parent, err := b.s.Client.Channel(thread.ParentID)
+		if err != nil {
+			log.Println("couldn't fetch parent channel:", err)
+			continue
 		}
 
+		for _, tag := range parent.AvailableTags {
+			b.tagCache[thread.ParentID][tag.Name] = tag.ID
+		}
+	}
+}
+
+func (b *Bot) cleanSolvedThreads(threads []discord.Channel) {
+	for _, thread := range threads {
+		log.Println("checking thread", thread.ID, thread.Name)
+		tagID, ok := b.tagCache[thread.ParentID][SolvedTag]
+
 		// cache miss but no solved tag exists
-		if tagID == nil {
+		if !ok {
 			log.Println("skipping, no solved tag exists")
 			continue
 		}
 
 		// no solved tag set
-		if !slices.Contains(thread.AppliedTags, *tagID) {
+		if !slices.Contains(thread.AppliedTags, tagID) {
 			log.Println("skipping, solved tag not set")
 			continue
 		}
@@ -154,7 +174,7 @@ func (b *Bot) cleanGuild(guild discord.Guild) {
 		log.Println("closing thread")
 
 		// post has the solved tag and had no activity. Time to archive
-		err = b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
+		err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
 			Archived: option.True,
 		})
 
@@ -164,18 +184,95 @@ func (b *Bot) cleanGuild(guild discord.Guild) {
 	}
 }
 
-func (b *Bot) getPostSolvedTag(post discord.Channel) (*discord.TagID, error) {
-	parent, err := b.s.Client.Channel(post.ParentID)
-	if err != nil {
-		return nil, err
-	}
+func (b *Bot) markStaleThreads(threads []discord.Channel) {
+	log.Println("marking stale threads")
+	for _, thread := range threads {
+		log.Println("checking thread", thread.ID, thread.Name)
 
-	for _, tag := range parent.AvailableTags {
-		if tag.Name == SolvedTag {
-			return &tag.ID, nil
+		if thread.Flags&discord.FlagPinned == discord.FlagPinned {
+			log.Println("thread is pinned, skipping")
+			continue
+		}
+
+		tags, exists := b.tagCache[thread.ParentID]
+		if !exists {
+			log.Println("skipping, tag cache empty, should never happen")
+			continue
+		}
+
+		tagID, exists := tags[StaleTag]
+		if !exists {
+			log.Println("skipping, stale tag does not exist")
+			continue
+		}
+
+		if time.Since(thread.LastMessageID.Time()) < StaleTimeout {
+			log.Println("skpping, has recent activity")
+			if index := slices.Index(thread.AppliedTags, tagID); index >= 0 {
+				log.Println("stale thread has recent activity, unmarking as stale")
+				newTags := append(thread.AppliedTags[:index], thread.AppliedTags[index+1:]...)
+				err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
+					AppliedTags: &newTags,
+				})
+
+				if err != nil {
+					log.Println("error removing stale tag:", err)
+				}
+			}
+			continue
+		}
+
+		if slices.Contains(thread.AppliedTags, tagID) {
+			log.Println("skipping, already marked as stale")
+			continue
+		}
+
+		newtags := append(thread.AppliedTags, tagID)
+		err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
+			AppliedTags: &newtags,
+		})
+
+		if err != nil {
+			log.Println("error modifying channel:", err)
 		}
 	}
-	return nil, nil
+}
+
+func (b *Bot) cleanStaleThreads(threads []discord.Channel) {
+	log.Println("cleaning stale threads")
+	for _, thread := range threads {
+		log.Println("checking thread", thread.ID, thread.Name)
+
+		if thread.Flags&discord.FlagPinned == discord.FlagPinned {
+			log.Println("thread is pinned, skipping")
+			continue
+		}
+
+		tags, exists := b.tagCache[thread.ParentID]
+		if !exists {
+			log.Println("skipping, tag cache empty, should never happen")
+			continue
+		}
+
+		_, exists = tags[StaleTag]
+		if !exists {
+			log.Println("skipping, stale tag does not exist")
+			continue
+		}
+
+		if time.Since(thread.LastMessageID.Time()) < StaleTimeout+StaleGracePeriod {
+			log.Println("skpping, has recent activity")
+			continue
+		}
+
+		err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
+			Archived: option.True,
+		})
+
+		if err != nil {
+			log.Println("error modifying channel:", err)
+		}
+	}
 }
 
 func (b *Bot) HandleInteraction(ev *discord.InteractionEvent) *api.InteractionResponse {
