@@ -22,11 +22,13 @@ const (
 	SolvedTimeout = time.Minute
 	SolvedTag     = "solved"
 
+	Day = 24 * time.Hour
+
 	StaleTag = "stale"
 	// inactivity timeout before applying stale tag
-	StaleTimeout = 1 * 24 * time.Hour
+	StaleTimeout = 1 * Day
 	// how long to wait before closing a stale post
-	StaleGracePeriod = 3 * 24 * time.Hour
+	StaleGracePeriod = 1 * Day
 
 	HerderRole = 370280974593818644
 	SgtTailor  = 189020382559207425
@@ -123,6 +125,7 @@ func (b *Bot) cleanGuild(guild discord.Guild) {
 	b.cleanSolvedThreads(threads.Threads)
 	b.markStaleThreads(threads.Threads)
 	b.cleanStaleThreads(threads.Threads)
+	b.cleanPinnedThreads(threads.Threads)
 }
 
 func (b *Bot) fillTagCache(threads []discord.Channel) {
@@ -275,6 +278,38 @@ func (b *Bot) cleanStaleThreads(threads []discord.Channel) {
 	}
 }
 
+func (b *Bot) cleanPinnedThreads(threads []discord.Channel) {
+	log.Println("checking for messaged in pinned thread")
+	for _, thread := range threads {
+		if thread.Flags&discord.FlagPinned != discord.FlagPinned {
+			log.Println("skipping, thread is not pinned")
+			continue
+		}
+
+		messages, err := b.s.Client.Messages(thread.ID, 0)
+		if err != nil {
+			log.Println("error fetching messages for pinned thread:", err)
+			continue
+		}
+
+		for _, message := range messages {
+			if message.ID == discord.MessageID(thread.ID) {
+				continue
+			}
+
+			if message.Type != discord.DefaultMessage && message.Type != discord.InlinedReplyMessage {
+				continue
+			}
+
+			log.Printf("deleting message %#v", message)
+			err := b.s.Client.DeleteMessage(thread.ID, message.ID, "comment in pinned forum post")
+			if err != nil {
+				log.Println("error deleting message:", err)
+			}
+		}
+	}
+}
+
 func (b *Bot) HandleInteraction(ev *discord.InteractionEvent) *api.InteractionResponse {
 	switch data := ev.Data.(type) {
 	case *discord.CommandInteraction:
@@ -354,6 +389,7 @@ func (b *Bot) cmdSolved(ev *discord.InteractionEvent, data *discord.CommandInter
 		Type: api.MessageInteractionWithSource,
 		Data: &api.InteractionResponseData{
 			Content:         option.NewNullableString("Thread marked as solved"),
+			Flags:           discord.EphemeralMessage,
 			AllowedMentions: &api.AllowedMentions{},
 		},
 	}
