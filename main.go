@@ -192,7 +192,7 @@ func (b *Bot) markStaleThreads(threads []discord.Channel) {
 	for _, thread := range threads {
 		log.Println("checking thread", thread.ID, thread.Name)
 
-		if thread.Flags&discord.FlagPinned == discord.FlagPinned {
+		if thread.Flags&discord.PinnedThread == discord.PinnedThread {
 			log.Println("thread is pinned, skipping")
 			continue
 		}
@@ -246,7 +246,7 @@ func (b *Bot) cleanStaleThreads(threads []discord.Channel) {
 	for _, thread := range threads {
 		log.Println("checking thread", thread.ID, thread.Name)
 
-		if thread.Flags&discord.FlagPinned == discord.FlagPinned {
+		if thread.Flags&discord.PinnedThread == discord.PinnedThread {
 			log.Println("thread is pinned, skipping")
 			continue
 		}
@@ -281,7 +281,7 @@ func (b *Bot) cleanStaleThreads(threads []discord.Channel) {
 func (b *Bot) cleanPinnedThreads(threads []discord.Channel) {
 	log.Println("checking for messaged in pinned thread")
 	for _, thread := range threads {
-		if thread.Flags&discord.FlagPinned != discord.FlagPinned {
+		if thread.Flags&discord.PinnedThread != discord.PinnedThread {
 			log.Println("skipping, thread is not pinned")
 			continue
 		}
