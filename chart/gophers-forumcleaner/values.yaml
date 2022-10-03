@@ -1,0 +1,11 @@
+image:
+  repository: swiltink/forumcleaner
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "1.0.0"
+
+# discord bot token
+botToken: ""
+
+nameOverride: ""
+fullnameOverride: ""
