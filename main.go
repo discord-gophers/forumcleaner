@@ -162,6 +162,13 @@ func (b *Bot) cleanSolvedThreads(threads []discord.Channel) {
 			continue
 		}
 
+		// refresh data as the api no longer returns applied_tags: https://github.com/discord/discord-api-docs/issues/6258
+		thread, err := b.s.Channel(thread.ID)
+		if err != nil {
+			log.Printf("error getting thread: %s", err)
+			return
+		}
+
 		// no solved tag set
 		if !slices.Contains(thread.AppliedTags, tagID) {
 			log.Println("skipping, solved tag not set")
@@ -170,14 +177,14 @@ func (b *Bot) cleanSolvedThreads(threads []discord.Channel) {
 
 		// post hasn't expired yet
 		if time.Since(thread.LastMessageID.Time()) < SolvedTimeout {
-			log.Println("skipping, post has recent activity")
+			log.Printf("skipping solved tag, post has recent activity: %s", time.Since(thread.LastMessageID.Time()))
 			continue
 		}
 
 		log.Println("closing thread")
 
 		// post has the solved tag and had no activity. Time to archive
-		err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
+		err = b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
 			Archived: option.True,
 		})
 
