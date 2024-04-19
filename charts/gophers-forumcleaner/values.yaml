@@ -1,7 +1,7 @@
 image:
   repository: swiltink/forumcleaner
   pullPolicy: IfNotPresent
-  tag: "1.0.1"
+  tag: "1.0.2"
 
 # discord bot token
 botToken: ""
