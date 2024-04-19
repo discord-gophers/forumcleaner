@@ -34,6 +34,8 @@ const (
 	SgtTailor  = 189020382559207425
 )
 
+var solvedCommandID = ""
+
 func main() {
 	log.SetFlags(0)
 
@@ -72,6 +74,10 @@ var commands = []api.CreateCommandData{
 		Name:        "solved",
 		Description: "marks the current forum post as resolved",
 	},
+	{
+		Name:        "done",
+		Description: "prompts to mark the forum post as resolved",
+	},
 }
 
 func overwriteCommands(s *state.State) error {
@@ -80,7 +86,13 @@ func overwriteCommands(s *state.State) error {
 		return errors.Wrap(err, "cannot get current app ID")
 	}
 
-	_, err = s.BulkOverwriteCommands(app.ID, commands)
+	newCmds, err := s.BulkOverwriteCommands(app.ID, commands)
+	for _, c := range newCmds {
+		if c.Name == "solved" {
+			solvedCommandID = c.ID.String()
+		}
+	}
+
 	return err
 }
 
@@ -224,7 +236,6 @@ func (b *Bot) markStaleThreads(threads []discord.Channel) {
 				err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
 					AppliedTags: &newTags,
 				})
-
 				if err != nil {
 					log.Println("error removing stale tag:", err)
 				}
@@ -241,7 +252,6 @@ func (b *Bot) markStaleThreads(threads []discord.Channel) {
 		err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
 			AppliedTags: &newtags,
 		})
-
 		if err != nil {
 			log.Println("error modifying channel:", err)
 		}
@@ -278,7 +288,6 @@ func (b *Bot) cleanStaleThreads(threads []discord.Channel) {
 		err := b.s.Client.ModifyChannel(thread.ID, api.ModifyChannelData{
 			Archived: option.True,
 		})
-
 		if err != nil {
 			log.Println("error modifying channel:", err)
 		}
@@ -323,8 +332,17 @@ func (b *Bot) HandleInteraction(ev *discord.InteractionEvent) *api.InteractionRe
 		switch data.Name {
 		case "solved":
 			return b.cmdSolved(ev, data)
+		case "done":
+			return b.cmdDone(ev, data)
 		default:
 			return errorResponse(fmt.Sprintf("unknown command %q", data.Name))
+		}
+	case *discord.ButtonInteraction:
+		switch data.CustomID {
+		case "solved":
+			return b.cmdSolved(ev, data)
+		default:
+			return errorResponse(fmt.Sprintf("unknown event %q", data.CustomID))
 		}
 	default:
 		return errorResponse(fmt.Sprintf("unknown interaction %T", ev.Data))
@@ -343,7 +361,7 @@ func (b *Bot) checkAllowlist(g discord.GuildID, c *discord.Channel, m *discord.M
 	return slices.Contains(m.RoleIDs, HerderRole)
 }
 
-func (b *Bot) cmdSolved(ev *discord.InteractionEvent, data *discord.CommandInteraction) *api.InteractionResponse {
+func (b *Bot) cmdSolved(ev *discord.InteractionEvent, data discord.InteractionData) *api.InteractionResponse {
 	channel, err := b.s.Client.Channel(ev.ChannelID)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("can't read channel: %s", err))
@@ -397,6 +415,62 @@ func (b *Bot) cmdSolved(ev *discord.InteractionEvent, data *discord.CommandInter
 		Data: &api.InteractionResponseData{
 			Content:         option.NewNullableString("Thread marked as solved"),
 			Flags:           discord.EphemeralMessage,
+			AllowedMentions: &api.AllowedMentions{},
+		},
+	}
+}
+
+func (b *Bot) cmdDone(ev *discord.InteractionEvent, _ discord.InteractionData) *api.InteractionResponse {
+	channel, err := b.s.Client.Channel(ev.ChannelID)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("can't read channel: %s", err))
+	}
+
+	if !channel.ParentID.IsValid() {
+		return errorResponse("this command only works in forum posts")
+	}
+
+	parent, err := b.s.Client.Channel(channel.ParentID)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("can't read parent channel: %s", err))
+	}
+
+	if parent.Type != discord.GuildForum {
+		return errorResponse("this command only works in forum posts")
+	}
+
+	var solvedTag *discord.Tag
+	for _, tag := range parent.AvailableTags {
+		if tag.Name == SolvedTag {
+			solvedTag = &tag
+			break
+		}
+	}
+
+	if solvedTag == nil {
+		return errorResponse("no solved tag found to apply")
+	}
+
+	if slices.Contains(channel.AppliedTags, solvedTag.ID) {
+		return errorResponse("post already marked as solved")
+	}
+
+	return &api.InteractionResponse{
+		Type: api.MessageInteractionWithSource,
+		Data: &api.InteractionResponseData{
+			Content: option.NewNullableString(fmt.Sprintf(
+				"If your question has been solved, please close the thread with </solved:%s>",
+				solvedCommandID,
+			)),
+			Components: &discord.ContainerComponents{
+				&discord.ActionRowComponent{
+					&discord.ButtonComponent{
+						CustomID: "solved",
+						Label:    "Mark as Solved",
+						Style:    discord.SuccessButtonStyle(),
+					},
+				},
+			},
 			AllowedMentions: &api.AllowedMentions{},
 		},
 	}
