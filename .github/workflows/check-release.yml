@@ -1,0 +1,38 @@
+name: CI/CD
+on:
+  push:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  
+jobs:
+  codestyle:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.22
+    - name: checkout code
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: go fmt
+      run: test -z "$(gofmt -e -d -s . | tee /dev/stderr)"
+    - name: go vet
+      run: go vet ./...
+    - name: go build
+      run: go build
+    - name: Extract metadata (tags, labels) for Docker
+      id: meta
+      uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+    - name: Build docker image
+      uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+      with:
+        context: .
+        push: false
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
