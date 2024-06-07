@@ -2,6 +2,16 @@ apiVersion: v1
 entries:
   forumcleaner:
   - apiVersion: v2
+    appVersion: 1.0.3
+    created: "2024-06-07T19:39:37.913970231Z"
+    description: A chart for the discord forum cleaner
+    digest: bca22045e031ab8657d13c39ab45a5295816e452b62403cf07cd55c516b3ff74
+    name: forumcleaner
+    type: application
+    urls:
+    - https://github.com/discord-gophers/forumcleaner/releases/download/forumcleaner-0.1.6/forumcleaner-0.1.6.tgz
+    version: 0.1.6
+  - apiVersion: v2
     appVersion: 1.0.2
     created: "2024-04-19T22:04:03.517415718Z"
     description: A chart for the discord forum cleaner
@@ -52,4 +62,4 @@ entries:
     urls:
     - https://github.com/discord-gophers/forumcleaner/releases/download/gophers-forumcleaner-0.1.1/gophers-forumcleaner-0.1.1.tgz
     version: 0.1.1
-generated: "2022-10-04T12:55:47.278861032Z"
+generated: "2024-06-07T19:39:37.913993525Z"
