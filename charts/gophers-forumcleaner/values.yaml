@@ -3,8 +3,9 @@ image:
   pullPolicy: IfNotPresent
   tag: ""
 
-# discord bot token
+# discord bot token or an existing secret
 botToken: ""
+existingSecret: ""
 
 nameOverride: ""
 fullnameOverride: ""
